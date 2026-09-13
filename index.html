@@ -3,25 +3,43 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Camera Permission Demo</title>
+  <title>Camera Share</title>
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
-
   <div class="container">
-    <h1>📷 Camera Demo</h1>
 
-    <p>
-      कैमरा खोलने के लिए आपकी अनुमति जरूरी है।
-    </p>
+    <h1>📷 Camera Share</h1>
 
-    <button id="cameraBtn">Camera Allow करें</button>
+    <div id="home">
+      <p>एक सुरक्षित camera-sharing room बनाओ।</p>
+      <button id="createBtn">Create Room</button>
+      <p id="roomInfo"></p>
+    </div>
 
-    <video id="camera" autoplay playsinline></video>
+    <div id="guest" style="display:none;">
+      <h2>Camera Sharing Request</h2>
+      <p>
+        इस room का दूसरा व्यक्ति आपकी camera stream देख सकेगा।
+        Camera तभी शुरू होगा जब आप अनुमति देंगे।
+      </p>
 
-    <p id="status"></p>
+      <button id="shareBtn">✅ Yes, Share Camera</button>
+      <p id="status"></p>
+
+      <video id="localVideo" autoplay playsinline muted></video>
+    </div>
+
+    <div id="host" style="display:none;">
+      <h2>Waiting for Camera...</h2>
+      <p id="hostStatus">Guest के आने का इंतजार है।</p>
+
+      <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+
   </div>
 
-  <script src="script.js"></script>
+  <script type="module" src="script.js"></script>
 </body>
 </html>
