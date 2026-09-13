@@ -7,6 +7,7 @@ import {
   set,
   get,
   onValue,
+  onChildAdded,
   push
 } from
   "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
@@ -18,7 +19,10 @@ import {
   "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
 
 
-// Firebase configuration
+// =============================
+// FIREBASE
+// =============================
+
 const firebaseConfig = {
   apiKey: "AIzaSyD5kH_VWXI2r_znQbhlHenqDEZBJmnJcFM",
   authDomain: "camra-share.firebaseapp.com",
@@ -39,7 +43,10 @@ const auth = getAuth(app);
 await signInAnonymously(auth);
 
 
-// Elements
+// =============================
+// ELEMENTS
+// =============================
+
 const home = document.getElementById("home");
 const guest = document.getElementById("guest");
 const host = document.getElementById("host");
@@ -55,9 +62,12 @@ const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 
 
-// WebRTC
-let peerConnection;
-let localStream;
+// =============================
+// WEBRTC
+// =============================
+
+let peerConnection = null;
+let localStream = null;
 
 const rtcConfig = {
   iceServers: [
@@ -68,35 +78,14 @@ const rtcConfig = {
 };
 
 
-// Generate room ID
+// =============================
+// ROOM ID
+// =============================
+
 function generateRoomId() {
   return Math.random()
     .toString(36)
     .substring(2, 10);
-}
-
-
-// Convert Firebase snapshot data into ICE candidate
-function addCandidateListener(roomId, type, callback) {
-
-  const candidatesRef =
-    ref(db, `rooms/${roomId}/${type}`);
-
-  onValue(candidatesRef, snapshot => {
-
-    const data = snapshot.val();
-
-    if (!data) return;
-
-    Object.values(data).forEach(candidate => {
-
-      callback(candidate);
-
-    });
-
-  }, {
-    onlyOnce: true
-  });
 }
 
 
@@ -106,122 +95,260 @@ function addCandidateListener(roomId, type, callback) {
 
 createBtn.addEventListener("click", async () => {
 
-  const roomId = generateRoomId();
+  try {
 
-  home.style.display = "none";
-  host.style.display = "block";
+    const roomId = generateRoomId();
 
-  const roomRef = ref(db, `rooms/${roomId}`);
+    home.style.display = "none";
+    host.style.display = "block";
 
-  peerConnection = new RTCPeerConnection(rtcConfig);
+    roomInfo.textContent = `Room ID: ${roomId}`;
 
+    const roomRef = ref(db, `rooms/${roomId}`);
 
-  peerConnection.ontrack = event => {
-
-    remoteVideo.srcObject = event.streams[0];
-
-    hostStatus.textContent =
-      "🎥 Guest camera stream connected.";
-
-  };
+    peerConnection = new RTCPeerConnection(rtcConfig);
 
 
-  peerConnection.onicecandidate = async event => {
-
-    if (!event.candidate) return;
-
-    const candidateRef =
-      push(ref(db, `rooms/${roomId}/hostCandidates`));
-
-    await set(candidateRef, event.candidate.toJSON());
-
-  };
+    // IMPORTANT:
+    // Host is only receiving guest video.
+    // Host camera is NOT requested.
+    peerConnection.addTransceiver("video", {
+      direction: "recvonly"
+    });
 
 
-  const offer = await peerConnection.createOffer();
+    // Guest video arrives here
+    peerConnection.ontrack = event => {
 
-  await peerConnection.setLocalDescription(offer);
+      console.log("Guest video received");
 
+      if (event.streams && event.streams[0]) {
 
-  await set(ref(db, `rooms/${roomId}/offer`), {
-    type: offer.type,
-    sdp: offer.sdp
-  });
+        remoteVideo.srcObject = event.streams[0];
 
+        hostStatus.textContent =
+          "🎥 Guest का live camera connected है।";
 
-  roomInfo.textContent =
-    `Room ID: ${roomId}`;
+      }
 
-
-  const inviteLink =
-    `${window.location.origin}${window.location.pathname}?room=${roomId}`;
-
-  hostStatus.innerHTML = `
-    🔗 Guest को यह link भेजो:<br><br>
-    <input value="${inviteLink}" readonly
-      style="width:100%;padding:10px;">
-    <br><br>
-    <button id="copyBtn">Copy Link</button>
-  `;
+    };
 
 
-  document.getElementById("copyBtn").onclick = async () => {
+    peerConnection.onconnectionstatechange = () => {
 
-    await navigator.clipboard.writeText(inviteLink);
-
-    document.getElementById("copyBtn").textContent =
-      "✅ Link Copied";
-
-  };
-
-
-  // Wait for answer
-  onValue(
-    ref(db, `rooms/${roomId}/answer`),
-    async snapshot => {
-
-      const answer = snapshot.val();
-
-      if (!answer) return;
-
-      if (peerConnection.currentRemoteDescription) return;
-
-      await peerConnection.setRemoteDescription(
-        new RTCSessionDescription(answer)
+      console.log(
+        "Connection:",
+        peerConnection.connectionState
       );
 
-      hostStatus.textContent =
-        "🔄 Camera connection स्थापित हो रही है...";
+      if (
+        peerConnection.connectionState === "connected"
+      ) {
 
-    }
-  );
+        hostStatus.textContent =
+          "🟢 Guest का live camera दिखाई दे रहा है।";
+
+      }
+
+      if (
+        peerConnection.connectionState === "disconnected" ||
+        peerConnection.connectionState === "failed"
+      ) {
+
+        hostStatus.textContent =
+          "❌ Camera connection बंद हो गया।";
+
+      }
+
+    };
 
 
-  // Guest ICE candidates
-  onValue(
-    ref(db, `rooms/${roomId}/guestCandidates`),
-    snapshot => {
+    // Host ICE candidates
+    peerConnection.onicecandidate = async event => {
 
-      const data = snapshot.val();
+      if (!event.candidate) return;
 
-      if (!data) return;
+      const candidateRef =
+        push(
+          ref(
+            db,
+            `rooms/${roomId}/hostCandidates`
+          )
+        );
 
-      Object.values(data).forEach(async candidate => {
+      await set(
+        candidateRef,
+        event.candidate.toJSON()
+      );
+
+    };
+
+
+    // Create offer
+    const offer =
+      await peerConnection.createOffer();
+
+    await peerConnection.setLocalDescription(
+      offer
+    );
+
+
+    // Save offer
+    await set(
+      ref(db, `rooms/${roomId}/offer`),
+      {
+        type: offer.type,
+        sdp: offer.sdp
+      }
+    );
+
+
+    // Guest invite link
+    const inviteLink =
+      `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+
+
+    hostStatus.innerHTML = `
+      🔗 Guest को यह link भेजो:<br><br>
+
+      <input
+        value="${inviteLink}"
+        readonly
+        style="width:100%;padding:10px;box-sizing:border-box;"
+      >
+
+      <br><br>
+
+      <button id="copyBtn">
+        Copy Link
+      </button>
+
+      <br><br>
+
+      Guest link खोलकर
+      <b>Yes, Share Camera</b>
+      दबाएगा।
+    `;
+
+
+    const copyBtn =
+      document.getElementById("copyBtn");
+
+
+    copyBtn.onclick = async () => {
+
+      try {
+
+        await navigator.clipboard.writeText(
+          inviteLink
+        );
+
+        copyBtn.textContent =
+          "✅ Link Copied";
+
+      } catch (error) {
+
+        console.log(error);
+
+      }
+
+    };
+
+
+    // =============================
+    // WAIT FOR GUEST ANSWER
+    // =============================
+
+    onValue(
+      ref(db, `rooms/${roomId}/answer`),
+
+      async snapshot => {
+
+        const answer = snapshot.val();
+
+        if (!answer) return;
+
+        if (
+          peerConnection.currentRemoteDescription
+        ) {
+          return;
+        }
 
         try {
 
-          await peerConnection.addIceCandidate(
-            new RTCIceCandidate(candidate)
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(answer)
           );
 
+          hostStatus.textContent =
+            "🔄 Guest camera connection स्थापित हो रही है...";
+
         } catch (error) {
-          console.log(error);
+
+          console.error(
+            "Answer error:",
+            error
+          );
+
         }
 
-      });
+      }
+    );
 
-    }
-  );
+
+    // =============================
+    // GUEST ICE
+    // =============================
+
+    onChildAdded(
+      ref(db, `rooms/${roomId}/guestCandidates`),
+
+      async snapshot => {
+
+        const candidate =
+          snapshot.val();
+
+        if (!candidate) return;
+
+        try {
+
+          if (
+            peerConnection.remoteDescription
+          ) {
+
+            await peerConnection.addIceCandidate(
+              new RTCIceCandidate(candidate)
+            );
+
+          }
+
+        } catch (error) {
+
+          console.log(
+            "Guest ICE error:",
+            error
+          );
+
+        }
+
+      }
+    );
+
+
+    hostStatus.innerHTML += `
+      <br>
+      ⏳ Guest के camera की waiting...
+    `;
+
+
+  } catch (error) {
+
+    console.error(error);
+
+    hostStatus.textContent =
+      "❌ Room बनाने में problem हुई।";
+
+  }
 
 });
 
@@ -230,11 +357,13 @@ createBtn.addEventListener("click", async () => {
 // GUEST
 // =============================
 
-const params = new URLSearchParams(
-  window.location.search
-);
+const params =
+  new URLSearchParams(
+    window.location.search
+  );
 
-const roomId = params.get("room");
+const roomId =
+  params.get("room");
 
 
 if (roomId) {
@@ -243,147 +372,161 @@ if (roomId) {
   guest.style.display = "block";
 
 
-  shareBtn.addEventListener("click", async () => {
+  shareBtn.addEventListener(
+    "click",
+    async () => {
 
-    try {
+      try {
 
-      status.textContent =
-        "📷 Camera permission माँगी जा रही है...";
-
-
-      // IMPORTANT:
-      // Camera is requested ONLY after user's button click.
-      localStream =
-        await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false
-        });
-
-
-      localVideo.srcObject = localStream;
-      localVideo.style.display = "block";
-
-
-      shareBtn.disabled = true;
-
-      status.textContent =
-        "✅ Camera sharing चालू है।";
-
-
-      peerConnection =
-        new RTCPeerConnection(rtcConfig);
-
-
-      localStream.getTracks().forEach(track => {
-
-        peerConnection.addTrack(
-          track,
-          localStream
-        );
-
-      });
-
-
-      peerConnection.onicecandidate =
-        async event => {
-
-          if (!event.candidate) return;
-
-          const candidateRef =
-            push(
-              ref(
-                db,
-                `rooms/${roomId}/guestCandidates`
-              )
-            );
-
-          await set(
-            candidateRef,
-            event.candidate.toJSON()
-          );
-
-        };
-
-
-      // Get host offer
-      const offerSnapshot =
-        await get(
-          ref(db, `rooms/${roomId}/offer`)
-        );
-
-
-      if (!offerSnapshot.exists()) {
+        shareBtn.disabled = true;
 
         status.textContent =
-          "❌ Room नहीं मिला।";
-
-        return;
-
-      }
+          "📷 Camera permission माँगी जा रही है...";
 
 
-      const offer = offerSnapshot.val();
+        // ==================================
+        // CAMERA ONLY AFTER USER CLICK
+        // ==================================
+
+        localStream =
+          await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
 
 
-      await peerConnection.setRemoteDescription(
-        new RTCSessionDescription(offer)
-      );
+        // Show guest's own camera
+        localVideo.srcObject =
+          localStream;
+
+        localVideo.style.display =
+          "block";
 
 
-      const answer =
-        await peerConnection.createAnswer();
+        status.textContent =
+          "✅ Camera permission मिल गई। Connecting...";
 
 
-      await peerConnection.setLocalDescription(
-        answer
-      );
+        // ==================================
+        // WEBRTC CONNECTION
+        // ==================================
+
+        peerConnection =
+          new RTCPeerConnection(rtcConfig);
 
 
-      await set(
-        ref(db, `rooms/${roomId}/answer`),
-        {
-          type: answer.type,
-          sdp: answer.sdp
-        }
-      );
+        // Add camera tracks
+        localStream
+          .getTracks()
+          .forEach(track => {
 
-
-      // Host ICE candidates
-      onValue(
-        ref(db, `rooms/${roomId}/hostCandidates`),
-        snapshot => {
-
-          const data = snapshot.val();
-
-          if (!data) return;
-
-          Object.values(data).forEach(async candidate => {
-
-            try {
-
-              await peerConnection.addIceCandidate(
-                new RTCIceCandidate(candidate)
-              );
-
-            } catch (error) {
-              console.log(error);
-            }
+            peerConnection.addTrack(
+              track,
+              localStream
+            );
 
           });
 
+
+        // Guest ICE
+        peerConnection.onicecandidate =
+          async event => {
+
+            if (!event.candidate) return;
+
+
+            const candidateRef =
+              push(
+                ref(
+                  db,
+                  `rooms/${roomId}/guestCandidates`
+                )
+              );
+
+
+            await set(
+              candidateRef,
+              event.candidate.toJSON()
+            );
+
+          };
+
+
+        peerConnection.onconnectionstatechange =
+          () => {
+
+            console.log(
+              "Guest connection:",
+              peerConnection.connectionState
+            );
+
+
+            if (
+              peerConnection.connectionState ===
+              "connected"
+            ) {
+
+              status.textContent =
+                "🟢 आपका camera दूसरे व्यक्ति को live दिखाई दे रहा है।";
+
+            }
+
+
+            if (
+              peerConnection.connectionState ===
+              "failed"
+            ) {
+
+              status.textContent =
+                "❌ Camera connection failed.";
+
+            }
+
+          };
+
+
+        // ==================================
+        // GET HOST OFFER
+        // ==================================
+
+        const offerSnapshot =
+          await get(
+            ref(
+              db,
+              `rooms/${roomId}/offer`
+            )
+          );
+
+
+        if (!offerSnapshot.exists()) {
+
+          localStream
+            .getTracks()
+            .forEach(track => track.stop());
+
+          status.textContent =
+            "❌ Room नहीं मिला।";
+
+          shareBtn.disabled = false;
+
+          return;
+
         }
-      );
 
 
-    } catch (error) {
+        const offer =
+          offerSnapshot.val();
 
-      console.error(error);
 
-      status.textContent =
-        "❌ Camera permission नहीं मिली।";
+        // Set host offer
+        await peerConnection
+          .setRemoteDescription(
+            new RTCSessionDescription(
+              offer
+            )
+          );
 
-    }
 
-  });
-
-        }
+        // ==================================
+        // CREATE ANSWER
+        // ==================================
